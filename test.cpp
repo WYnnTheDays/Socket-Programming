@@ -216,7 +216,12 @@ int main(int argc, char **argv)
                 }
                 // error = fcntl(events[i].data.fd, F_SETFD, O_NONBLOCK);
                 // epoll_event_mod(events[i].data.fd, EPOLLIN | EPOLLOUT, efd);
-                 char sbuf[BUF_SIZE + 1];
+                
+                /**
+                 * @brief write after read will cause blocking 
+                 * 
+                 */
+                char sbuf[BUF_SIZE + 1];
                 memset(sbuf, '4', BUF_SIZE + 1);
                  error = sendAll(events[i].data.fd, (void *)sbuf, BUF_SIZE, 20);
                 if(error == -1){
