@@ -1,9 +1,26 @@
 #include "server.h"
 #include <cstring>
-using namespace serv;
-// Server::Server(){
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include<thread>
+using namespace tcp;
 
-// }
+std::map<int, tcp::Con> Conns;
+// struct Con tcp::connections;
+tcp::Con connections;
+
+void tcp::SetNonBlocking(int fd)
+{
+    int flag = fcntl(fd, F_GETFL);
+    flag |= O_NONBLOCK;
+    int ss = fcntl(fd, F_SETFL, flag);
+    if (ss < 0)
+    {
+        perror("fcntl");
+        exit(EXIT_FAILURE);
+    }
+}
 
 void *get_addr_in(struct sockaddr *sa)
 {
@@ -74,8 +91,6 @@ Status Server::Bind()
         break;
     }
     //    if(sockList.empty() == true) return Status::FAIL;
-    // if (sockfd == -1)
-    // return Status::FAIL;
     if (res == nullptr)
         return Status::FAIL;
     freeaddrinfo(servInfo);
@@ -138,93 +153,210 @@ Status Server::Accept(int &newFd)
 
 // }
 static std::map<int, int> recvInfo;
-int serv::readAll(int fd, void *buf, int bufSize, int readSize)
+static std::map<int, std::string> recvMsg;
+int tcp::readAll(int fd, void *buf, int bufSize)
 {
     int bufLeft = bufSize;
     char *recvStart = (char *)buf;
-    // size_t readSize =
-    // std::map<int, int> recvInfo;
     std::cout << "Reading from fd:" << fd << std::endl;
-    // std::cout << recvStart << std::endl;
     while (bufLeft > 0)
     {
-        ssize_t byteCount = recv(fd, recvStart, readSize, 0);
-        if (byteCount <= 0)
+        ssize_t byteCount = recv(fd, recvStart, bufLeft, 0);
+        if (byteCount < 0)
         {
-            if (byteCount == 0)
+            if (errno == EAGAIN)
             {
-                std::cerr << __func__ << ":Read Complete" << std::endl;
+                std::cerr << __func__ << ":" << byteCount << std::endl;
+                std::cerr << __func__ << ":try again " << std::endl;
                 return 0;
-                // continue;
             }
             else
             {
                 perror("recv");
                 return -1;
             }
-            // return -1;
+        }
+        if (byteCount == 0)
+        {
+            std::cerr << __func__ << ":Peer shutdown" << std::endl;
+            return -1;
+            // continue;
         }
         else
         {
             recvInfo[fd] += byteCount;
             fprintf(stderr, "Receive: %d/%d\n", byteCount, bufLeft);
             std::cout << "Total receive:" << fd << "/" << recvInfo[fd] << std::endl;
-            ssize_t ptrMove = ((bufLeft - byteCount) >= 0) ? byteCount : bufLeft;
             auto mesg = std::string(recvStart, recvStart + byteCount);
             std::cout << "Receive:" << mesg << std::endl;
-            recvStart += ptrMove;
-            bufLeft -= ptrMove;
-            readSize = (bufLeft - readSize >= 0) ? readSize : bufLeft;
-            // recvInfo[fd] += byteCount;
-            // std::cout << "Total receive:"<<fd<<"/"<<recvInfo[fd]<<std::endl;
+            recvMsg[fd] += mesg;
+            recvStart += byteCount;
+            bufLeft -= byteCount;
         }
     }
     std::cout << __func__ << " Buffer is full" << std::endl;
-    // std::cout << recvStart << std::endl;
     return 1;
 }
 
 static std::map<int, int> sendInfo;
-int serv::sendAll(int fd, void *buf, int len, int sendSize)
+
+// int serv::send(){
+
+// }
+
+/**
+ * @brief send all required data in the buffer
+ * 
+ * @param fd 
+ * @param buf 
+ * @param len 
+ * @param sendSize 
+ * @return int 
+ *         -1 when error occur
+ *         0 if success
+ *         1 if need to try again
+ */
+int tcp::sendAll(int fd, void *buf, int &actualSend, int len)
 {
-    //send by bytes
-    char *sendStart = (char *)buf;
+    //send by bytess
+    // we don't need a buffer in write
     ssize_t byteSend = 0;
     ssize_t totalSend = 0;
     ssize_t sendLeft = len;
-    if (sendSize > len)
-    {
-        //avoid sending too much data
-        sendSize = len;
-    }
+    char *sendStart = (char *)buf;
     while (sendLeft > 0)
     {
-        byteSend = send(fd, sendStart, sendSize, 0);
-        if (byteSend == -1)
+        byteSend = send(fd, sendStart, sendLeft, 0);
+        if (byteSend < 0)
         {
+            if (errno == EAGAIN)
+            {
+                std::cout << __func__ << ": try again" << std::endl;
+                return 0;
+            }
             perror("Send");
-            return -1;
+            exit(EXIT_FAILURE);
         }
-        std::cout << "Send " << byteSend << " bytes" << std::endl;
-        auto sendMsg = std::string(sendStart, sendStart + sendSize);
-        std::cout << "Send " << sendMsg << std::endl;
-        ssize_t ptrMove = (sendLeft - byteSend > 0) ? byteSend : sendLeft;
-        sendStart += ptrMove;
-        sendLeft -= ptrMove;
-        sendSize = (sendLeft - sendSize > 0) ? sendSize : sendLeft;
-        totalSend += byteSend;
+        else
+        {
+            std::cout << "Send " << byteSend << "/" << sendLeft << " bytes" << std::endl;
+            auto sendMsg = std::string(sendStart, sendStart + byteSend);
+            std::cout << "Send " << sendMsg << std::endl;
+            sendStart += byteSend;
+            sendLeft -= byteSend;
+            totalSend += byteSend;
+        }
     }
+    actualSend = totalSend;
     std::cout << __func__ << " Sent buffer is empty" << std::endl;
     std::cout << "Total send " << totalSend << std::endl;
-    if (totalSend != len)
-    {
-        std::cerr << "Wrong Sending" << std::endl;
-        std::cerr << totalSend << "/" << len << std::endl;
-        exit(EXIT_FAILURE);
-    }
-    return 0;
+    return 1;
 }
 
+// int sendInt(int fd,)
+
+void tcp::HandleWrite(int connFd, const void *sendBuf, int bufSize,int &actualSend)
+{
+    if (connFd < 0)
+    {
+        std::cerr << "fd:" << connFd << " Descriptor Error" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    ssize_t bufLeft = bufSize;
+    char *sendStart = (char *)sendBuf;
+    ssize_t byteSend;
+    while ((byteSend = send(connFd, sendStart, bufLeft, 0)) >= 0)
+    {
+        std::cout << "Send " << byteSend << "/" << bufLeft << " bytes" << std::endl;
+        auto sendMsg = std::string(sendStart, sendStart + byteSend);
+        std::cout << "Send " << sendMsg << std::endl;
+        sendStart += byteSend;
+        bufLeft -= byteSend;
+        sendInfo[connFd] += byteSend;
+        actualSend += byteSend;
+        std::cout << "Total send:" << connFd << "/" << sendInfo[connFd] << std::endl;
+        if (bufLeft <= 0)
+        {
+            std::cerr << "Buffer full" << std::endl;
+            return;
+        }
+    }
+    if (byteSend < 0)
+    {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        {
+            return;
+        }
+        else
+        {
+            perror("send");
+            exit(EXIT_FAILURE);
+        }
+    }
+}
+void tcp::HandleRead(int fd, void *buf, int size, int &actualRecv)
+{
+    if (fd < 0 || buf == nullptr)
+    {
+        std::cerr << "fd:" << fd << " Descriptor Error" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    char *start = (char *)buf;
+    int bufLeft = size;
+    ssize_t byteRead;
+    int totalRecv;
+    while ((byteRead = recv(fd, start, bufLeft, 0) > 0))
+    {
+        totalRecv += byteRead;
+        fprintf(stderr, "Receive: %d/%d\n", byteRead, bufLeft);
+        std::cout << std::this_thread::get_id()<<" Total receive:" << fd << "/" << totalRecv << std::endl;
+        auto mesg = std::string(start, start + byteRead);
+        std::cout << "Receive:" << mesg << std::endl;
+        start += byteRead;
+        bufLeft -= byteRead;
+        connections.readed += byteRead;
+        if (bufLeft <= 0)
+        {
+            std::cerr << "Buffer full" << std::endl;
+            return;
+        }
+    }
+    if (byteRead <= 0)
+    {
+        if (byteRead == 0)
+        {
+            std::cerr << __func__ << ":Peer shutdown" << std::endl;
+            // exit(EXIT_FAILURE);
+            close(fd);
+        }
+        else
+        {
+            if (errno == EAGAIN)
+            {
+                std::cerr << __func__ << ":" << byteRead << std::endl;
+                std::cerr << __func__ << ":try again " << std::endl;
+                return;
+            }
+            else
+            {
+                perror("recv");
+                // exit(EXIT_FAILURE);
+            }
+        }
+    }
+}
+
+void tcp::Epoll_create(int &epfd)
+{
+    epfd = epoll_create(1);
+    if (epfd == -1)
+    {
+        perror("epoll_create");
+        exit(EXIT_FAILURE);
+    }
+}
+
+// void Epoll_wait
 int EpollManager::create()
 {
     int efd = epoll_create(1);
@@ -236,7 +368,7 @@ int EpollManager::create()
     return efd;
 }
 
-void serv::epoll_event_add(int fd, int event, int epfd)
+void tcp::Epoll_event_add(int fd, int event, int epfd)
 {
     struct epoll_event ev;
     ev.data.fd = fd;
@@ -244,23 +376,20 @@ void serv::epoll_event_add(int fd, int event, int epfd)
     int ss = epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
     if (ss == -1)
     {
-        perror("EPOLL_CTL");
+        fprintf(stderr, "in %s, fd:%d %s:%s \n", __func__, fd, "epoll_ctl", strerror(errno));
         exit(EXIT_FAILURE);
     }
 }
-void serv::epoll_event_del(int fd, int event, int epfd)
+void tcp::Epoll_event_del(int fd, int event, int epfd)
 {
-    struct epoll_event ev;
-    ev.data.fd = fd;
-    ev.events = event;
-    int ss = epoll_ctl(epfd, EPOLL_CTL_DEL, fd, &ev);
+    int ss = epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
     if (ss == -1)
     {
-        perror("EPOLL_CTL");
+        fprintf(stderr, "in %s, fd:%d %s:%s \n", __func__, fd, "epoll_ctl", strerror(errno));
         exit(EXIT_FAILURE);
     }
 }
-void serv::epoll_event_mod(int fd, int event, int epfd)
+void tcp::Epoll_event_mod(int fd, int event, int epfd)
 {
     struct epoll_event ev;
     ev.data.fd = fd;
@@ -268,7 +397,7 @@ void serv::epoll_event_mod(int fd, int event, int epfd)
     int ss = epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev);
     if (ss == -1)
     {
-        perror("EPOLL_CTL");
+        fprintf(stderr, "in %s, fd:%d %s:%s \n", __func__, fd, "epoll_ctl", strerror(errno));
         exit(EXIT_FAILURE);
     }
 }

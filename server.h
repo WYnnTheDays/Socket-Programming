@@ -1,3 +1,5 @@
+#ifndef SERVER_H
+#define SERVER_H
 #include<iostream>
 #include<cstdlib>
 // #include<boost.hpp>
@@ -14,7 +16,7 @@
 #define BACKLOG 5
 #define SOCKUNAVAIL -1
 // #define ADDRESSLEN 
-namespace serv{
+namespace tcp{
 
 enum class Status{
     OK,
@@ -43,36 +45,47 @@ public:
     Status Read();
     Status Write();
     int getSock(){return sockfd;};
-    void lookupInfo(int,std::string&);
-    // Status 
+    void lookupInfo(int,std::string&); 
     virtual ~Server(){shutdown(sockfd,SHUT_RDWR); close(sockfd);};
     
-    // Status connect();
 private:
     Status GetInfo();
     struct addrinfo* servInfo;
     char* servName;
     char* servPort;
     int sockfd;
-    // std::vector<int> sockList;/
-    int sendAll(void *&buf,int len);
     std::vector<int> connSock;
     std::vector<peer_Struct> peerInfo;
 };
 
-int readAll(int fd, void *buf, int bufSize, int readSize);
+int readAll(int fd, void *buf, int bufSize);
 
 
-int sendAll(int fd, void *buf, int bufSize, int sendSize);
+int sendAll(int fd, void *buf, int& actualSend, int bufSize);
 
+
+int sendAll(int fd, void *buf, int& actualSend, int bufSize);
+
+
+void HandleAccept(int acceptFd, int epfd);
+void HandleWrite(int fd, const void *buf, int size, int&actualSend);
+void HandleRead(int fd, void *buf, int size, int&actualRecv);
 
 std::ostream& printServInfo(std::ostream&,Server&);
 
 
-struct Message{
-    int data1 = 1;
-    int data2 = 2;
-    char data3 = 'a';
+struct Msg{
+    int msgLen;
+    char delimeter;
+};
+
+
+struct Con{
+    std::string readed;
+    size_t written;
+    bool writeEnabled;
+    std::vector<std::string> strVec;
+    Con():written(0),writeEnabled(false){};
 };
 
 struct EpollManager{
@@ -82,7 +95,13 @@ public:
 private:
     struct epoll_event;
 };
-void epoll_event_add(int fd, int event, int epfd);
-void epoll_event_del(int fd, int event, int epfd);
-void epoll_event_mod(int fd, int event, int epfd);
+
+void Epoll_event_add(int fd, int event, int epfd);
+void Epoll_event_del(int fd, int event, int epfd);
+void Epoll_event_mod(int fd, int event, int epfd);
+void Epoll_wait(int epfd, int event, int maxEvents, int tiemout);
+void Epoll_create(int &epfd);
+void SetNonBlocking(int fd);
+// extern struct Con connections;
 }
+#endif

@@ -5,11 +5,15 @@ using namespace cli;
 #include <cstring>
 #include <unistd.h>
 #include <sys/types.h>
-#include<string>
+#include <string>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#define NONBLOCKING 1
 #define FAIL (-1)
 #define READ_SIZE 5
 #define SEND_SIZE 40
-#define BUF_SIZE 500
+#define BUF_SIZE 9000
 void *get_addr_in(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET)
@@ -84,39 +88,73 @@ int Client::GetInfo()
     return 0;
 }
 
+void HandleSend(){
+    
+}
+
 int main(int argc, char **argv)
 {
     pid_t sPid = getpid();
-    std::cout << "Server run on " << sPid << std::endl;
+    std::cout << "Client run on " << sPid << std::endl;
     Client c;
     int connFd;
     c.Connect(connFd);
+    // if (NONBLOCKING)
+    // {
+    //     int s = fcntl(connFd, F_SETFL, O_NONBLOCK);
+    //     if (s == -1)
+    //     {
+    //         printf("[error] fcntl(O_NONBLOCK), [errno %d]\n", errno);
+    //         exit(EXIT_FAILURE);
+    //     }
+    // }
     ssize_t count;
     char buf[BUF_SIZE];
     memset(buf, '3', BUF_SIZE);
     ssize_t ss;
     char recvBuf[BUF_SIZE];
     int sendLeft = BUF_SIZE;
-    ss = recv(connFd, recvBuf, sizeof(recvBuf), 0);
-    if (ss == 0)
-    {
-        std::cerr << "Connection is closed" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-    else if (ss == -1)
-    {
-        perror("Recv");
-        exit(EXIT_FAILURE);
-    }
-    recvBuf[ss + 1] = '\0';
-    std::cout << "Recv:" << recvBuf << std::endl;
+    // while (1)
+    // {
+    //     ss = recv(connFd, recvBuf, sizeof(recvBuf), 0);
+    //     if(errno == EAGAIN){
+    //         continue;
+    //     }
+    //     if (ss == 0)
+    //     {
+    //         std::cerr << "Connection is closed" << std::endl;
+    //         exit(EXIT_FAILURE);
+    //     }
+    //     else if (ss == -1)
+    //     {
+    //         perror("Recv");
+    //         exit(EXIT_FAILURE);
+    //     }
+    //     recvBuf[ss + 1] = '\0';
+    //     std::cout << "Recv:" << recvBuf << std::endl;
+    //     break;
+    //     // break;
+    // }
+    // ss = recv(connFd, recvBuf, sizeof(recvBuf), 0);
+    // if (ss == 0)
+    // {
+    //     std::cerr << "Connection is closed" << std::endl;
+    //     exit(EXIT_FAILURE);
+    // }
+    // else if (ss == -1)
+    // {
+    //     perror("Recv");
+    //     exit(EXIT_FAILURE);
+    // }
+    // recvBuf[ss + 1] = '\0';
+    // std::cout << "Recv:" << recvBuf << std::endl;
     int times = 3;
     char *start = buf;
     int sendCount = SEND_SIZE;
     int totalSend = 0;
     while (sendLeft >= 0)
     {
-        count = send(connFd, start, sendCount, 0);
+        count = send(connFd, start, sendLeft, 0);
         if (count == -1)
         {
             perror("send");
@@ -127,11 +165,6 @@ int main(int argc, char **argv)
             std::cerr << "Send over" << std::endl;
             break;
         }
-        if (count != SEND_SIZE)
-        {
-            std::cerr << "Partial Send" << std::endl;
-        }
-
         char *temp = new char[count];
         memmove(temp, start, count);
         std::cout << "Sent:" << count << " Bytes" << std::endl;
@@ -139,7 +172,7 @@ int main(int argc, char **argv)
         sendLeft -= count;
         start += count;
         totalSend += count;
-        sendCount = (sendLeft > SEND_SIZE) ? SEND_SIZE : sendLeft;
+        // sendCount = (sendLeft > SEND_SIZE) ? SEND_SIZE : sendLeft;
         delete[] temp;
     }
     std::cout << "Total send:" << totalSend << std::endl;
@@ -148,17 +181,22 @@ int main(int argc, char **argv)
     // std::cout << recvBuf<<std::endl;
     int bufLeft = BUF_SIZE;
     char recvBuffer[BUF_SIZE];
-    memset(recvBuffer,'0',sizeof(recvBuf));
+    memset(recvBuffer, '0', sizeof(recvBuf));
     char *recvStart = recvBuffer;
     size_t readSize = 15;
     int totalRecv = 0;
     while (bufLeft > 0)
     {
-        ssize_t byteCount = recv(connFd, recvStart, readSize, 0);
+        ssize_t byteCount = recv(connFd, recvStart, bufLeft, 0);
+        if (errno == EAGAIN)
+        {
+            continue;
+        }
         if (byteCount <= 0)
         {
             if (byteCount == 0)
             {
+                // std::cout << recvStart << std::endl;
                 std::cerr << __func__ << ":Read Complete" << std::endl;
                 return 0;
                 // continue;
@@ -172,20 +210,23 @@ int main(int argc, char **argv)
         }
         else
         {
-            totalRecv+=byteCount;
-            fprintf(stderr, "Receive: %d/%d totalReceive:%d\n", byteCount, bufLeft,totalRecv);
+            totalRecv += byteCount;
+            fprintf(stderr, "Receive: %d/%d totalReceive:%d\n", byteCount, bufLeft, totalRecv);
             // std::cout << recvStart<<std::endl;
             ssize_t ptrMove = ((bufLeft - byteCount) >= 0) ? byteCount : bufLeft;
             auto mesg = std::string(recvStart, recvStart + byteCount);
             std::cout << "Receive:" << mesg << std::endl;
+             if(mesg.find('$') == std::string::npos){
+                break;
+            }
             recvStart += ptrMove;
             bufLeft -= ptrMove;
-            readSize = (bufLeft - readSize >= 0) ? readSize : bufLeft;
+            // readSize = (bufLeft - readSize >= 0) ? readSize : bufLeft;
             // totalRecv+=byteCount;
         }
     }
     // std::cout << recvStart << std::endl;
-    std::cout << totalRecv <<std::endl;
+    std::cout << totalRecv << std::endl;
     // while(1);
     close(connFd);
     return EXIT_SUCCESS;

@@ -28,6 +28,15 @@ private:
 
 };
 
+
+struct Con{
+    std::string readed;
+    size_t written;
+    bool writeEnabled;
+    Con():written(0),writeEnabled(false){};
+};
+
+
 }
 // namespace 
 #endif
